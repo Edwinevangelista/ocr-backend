@@ -147,6 +147,8 @@ app.post('/auth/login', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
 
 // ===== ASISTENTE FINANCIERO IA =====
 app.post('/analizar-finanzas', async (req, res) => {
@@ -167,8 +169,8 @@ app.post('/analizar-finanzas', async (req, res) => {
     const tasaAhorro = totalIngresos > 0 ? (saldo / totalIngresos * 100) : 0;
 
     // Preparar contexto para Claude
-    const contexto = `
-Analiza estas finanzas personales y proporciona recomendaciones inteligentes:
+    const hoy = new Date();
+    const contexto = `Analiza estas finanzas personales y proporciona recomendaciones inteligentes:
 
 RESUMEN FINANCIERO:
 - Ingresos totales: $${totalIngresos.toFixed(2)}
@@ -181,11 +183,11 @@ RESUMEN FINANCIERO:
 
 GASTOS FIJOS PENDIENTES:
 ${gastosFijos.filter(g => g.estado !== 'Pagado').map(g => {
-  const hoy = new Date();
+  if (!g.dia_venc) return '';
   const vence = new Date(hoy.getFullYear(), hoy.getMonth(), g.dia_venc);
   const diasRestantes = Math.round((vence - hoy) / (1000 * 60 * 60 * 24));
   return `- ${g.nombre}: $${g.monto} (vence en ${diasRestantes} días)`;
-}).join('\n')}
+}).filter(Boolean).join('\n')}
 
 SUSCRIPCIONES ACTIVAS:
 ${suscripciones.map(s => `- ${s.servicio}: $${s.costo} (${s.ciclo})`).join('\n')}
@@ -193,27 +195,21 @@ ${suscripciones.map(s => `- ${s.servicio}: $${s.costo} (${s.ciclo})`).join('\n')
 DEUDAS:
 ${deudas.map(d => `- ${d.cuenta}: Balance $${d.balance}, Pago mínimo $${d.pago_minimo}`).join('\n')}
 
-Por favor, genera un análisis en formato JSON con esta estructura:
+Genera un análisis en formato JSON con esta estructura:
 {
-  "resumen": "Texto breve del estado financiero general (2-3 oraciones)",
+  "resumen": "Texto breve del estado financiero general (2-3 oraciones en español)",
   "recomendaciones": [
     {
       "prioridad": "urgente|alta|media|baja",
-      "titulo": "Título corto de la recomendación",
-      "descripcion": "Explicación de la recomendación",
+      "titulo": "Título corto",
+      "descripcion": "Explicación detallada",
       "monto": 123.45
     }
   ],
   "alertas": ["Lista de alertas urgentes"]
 }
 
-Enfócate en:
-- Pagos que vencen pronto (menos de 3 días = urgente)
-- Oportunidades de ahorro
-- Análisis de tasa de ahorro (>20% = excelente, 10-20% = bueno, <10% = mejorar)
-- Suscripciones que pueden cancelarse
-- Deudas que deberían pagarse
-`;
+Enfócate en: pagos que vencen pronto, oportunidades de ahorro, análisis de tasa de ahorro, y deudas prioritarias.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -240,5 +236,6 @@ Enfócate en:
   }
 });
 
+app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
