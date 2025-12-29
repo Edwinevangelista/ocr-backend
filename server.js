@@ -155,11 +155,10 @@ app.post('/analizar-finanzas', async (req, res) => {
   try {
     const { ingresos, gastosFijos, gastosVariables, suscripciones, deudas } = req.body;
     
-    // Calcular totales
-    const totalIngresos = ingresos.reduce((sum, i) => sum + (i.monto || 0), 0);
-    const totalGastosFijos = gastosFijos.reduce((sum, g) => sum + (g.monto || 0), 0);
-    const totalGastosVariables = gastosVariables.reduce((sum, g) => sum + (g.monto || 0), 0);
-    const totalSuscripciones = suscripciones.reduce((sum, s) => {
+    const totalIngresos = (ingresos || []).reduce((sum, i) => sum + (i.monto || 0), 0);
+    const totalGastosFijos = (gastosFijos || []).reduce((sum, g) => sum + (g.monto || 0), 0);
+    const totalGastosVariables = (gastosVariables || []).reduce((sum, g) => sum + (g.monto || 0), 0);
+    const totalSuscripciones = (suscripciones || []).reduce((sum, s) => {
       if (s.ciclo === 'Anual') return sum + (s.costo / 12);
       if (s.ciclo === 'Semanal') return sum + (s.costo * 4.33);
       return sum + s.costo;
@@ -168,73 +167,58 @@ app.post('/analizar-finanzas', async (req, res) => {
     const saldo = totalIngresos - totalGastos;
     const tasaAhorro = totalIngresos > 0 ? (saldo / totalIngresos * 100) : 0;
 
-    // Preparar contexto para Claude
-    const hoy = new Date();
-    const contexto = `Analiza estas finanzas personales y proporciona recomendaciones inteligentes:
-
-RESUMEN FINANCIERO:
-- Ingresos totales: $${totalIngresos.toFixed(2)}
-- Gastos fijos: $${totalGastosFijos.toFixed(2)}
-- Gastos variables: $${totalGastosVariables.toFixed(2)}
-- Suscripciones mensuales: $${totalSuscripciones.toFixed(2)}
-- Total gastos: $${totalGastos.toFixed(2)}
-- Saldo disponible: $${saldo.toFixed(2)}
-- Tasa de ahorro: ${tasaAhorro.toFixed(1)}%
-
-GASTOS FIJOS PENDIENTES:
-${gastosFijos.filter(g => g.estado !== 'Pagado').map(g => {
-  if (!g.dia_venc) return '';
-  const vence = new Date(hoy.getFullYear(), hoy.getMonth(), g.dia_venc);
-  const diasRestantes = Math.round((vence - hoy) / (1000 * 60 * 60 * 24));
-  return `- ${g.nombre}: $${g.monto} (vence en ${diasRestantes} días)`;
-}).filter(Boolean).join('\n')}
-
-SUSCRIPCIONES ACTIVAS:
-${suscripciones.map(s => `- ${s.servicio}: $${s.costo} (${s.ciclo})`).join('\n')}
-
-DEUDAS:
-${deudas.map(d => `- ${d.cuenta}: Balance $${d.balance}, Pago mínimo $${d.pago_minimo}`).join('\n')}
-
-Genera un análisis en formato JSON con esta estructura:
-{
-  "resumen": "Texto breve del estado financiero general (2-3 oraciones en español)",
-  "recomendaciones": [
-    {
-      "prioridad": "urgente|alta|media|baja",
-      "titulo": "Título corto",
-      "descripcion": "Explicación detallada",
-      "monto": 123.45
-    }
-  ],
-  "alertas": ["Lista de alertas urgentes"]
-}
-
-Enfócate en: pagos que vencen pronto, oportunidades de ahorro, análisis de tasa de ahorro, y deudas prioritarias.`;
+    const prompt = [
+      'Analiza estas finanzas personales y proporciona recomendaciones:',
+      '',
+      'RESUMEN:',
+      '- Ingresos: $' + totalIngresos.toFixed(2),
+      '- Gastos: $' + totalGastos.toFixed(2),
+      '- Saldo: $' + saldo.toFixed(2),
+      '- Tasa de ahorro: ' + tasaAhorro.toFixed(1) + '%',
+      '',
+      'Genera JSON con esta estructura:',
+      '{',
+      '  "resumen": "Analisis breve del estado financiero",',
+      '  "recomendaciones": [',
+      '    {"prioridad": "urgente|alta|media|baja", "titulo": "...", "descripcion": "...", "monto": 0}',
+      '  ],',
+      '  "alertas": ["alertas urgentes"]',
+      '}'
+    ].join('\n');
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 2000,
-      messages: [{
-        role: 'user',
-        content: contexto
-      }]
+      messages: [{ role: 'user', content: prompt }]
     });
 
     const responseText = message.content[0].text;
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     
     if (!jsonMatch) {
-      throw new Error('No se pudo extraer JSON de la respuesta');
+      return res.json({
+        resumen: 'Analisis financiero basico completado.',
+        recomendaciones: [
+          {
+            prioridad: tasaAhorro > 20 ? 'baja' : 'media',
+            titulo: 'Estado de tus finanzas',
+            descripcion: 'Ingresos: $' + totalIngresos.toFixed(2) + ', Gastos: $' + totalGastos.toFixed(2) + ', Saldo: $' + saldo.toFixed(2),
+            monto: saldo
+          }
+        ],
+        alertas: saldo < 0 ? ['Estas gastando mas de lo que ganas'] : []
+      });
     }
 
     const analisis = JSON.parse(jsonMatch[0]);
     res.json(analisis);
 
   } catch (error) {
-    console.error('Error en análisis financiero:', error);
+    console.error('Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
